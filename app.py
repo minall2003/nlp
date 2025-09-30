@@ -1,147 +1,155 @@
-# ============================================
-# 📌 Streamlit NLP Phase-wise with All Models
-# ============================================
-
 import streamlit as st
 import pandas as pd
-import spacy
-from spacy.lang.en.stop_words import STOP_WORDS
-from textblob import TextBlob
-
+import numpy as np
+import re
+import nltk
+from nltk.corpus import stopwords
+from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+import warnings
 
-# ============================
-# Load SpaCy & Globals
-# ============================
-nlp = spacy.load("en_core_web_sm")
-stop_words = STOP_WORDS
+# keep your original imports + functions here (not repeated for brevity)
+from streamlit_nlp_models_app import evaluate_phase  # assuming core logic in same file
 
-# ============================
-# Phase Feature Extractors
-# ============================
-def lexical_preprocess(text):
-    """Tokenization + Stopwords removal + Lemmatization"""
-    doc = nlp(text.lower())
-    tokens = [token.lemma_ for token in doc if token.text not in stop_words and token.is_alpha]
-    return " ".join(tokens)
+warnings.filterwarnings("ignore")
 
-def syntactic_features(text):
-    """Part-of-Speech tags"""
-    doc = nlp(text)
-    return " ".join([token.pos_ for token in doc])
+# ------------------ Streamlit UI ------------------
+def main():
+    st.set_page_config(page_title='🧠 NLP Phases vs ML Models', layout='wide')
 
-def semantic_features(text):
-    """Sentiment polarity & subjectivity"""
-    blob = TextBlob(text)
-    return [blob.sentiment.polarity, blob.sentiment.subjectivity]
-
-def discourse_features(text):
-    """Sentence count + first word of each sentence"""
-    doc = nlp(text)
-    sentences = [sent.text.strip() for sent in doc.sents]
-    return f"{len(sentences)} {' '.join([s.split()[0] for s in sentences if s.split()])}"
-
-pragmatic_words = ["must", "should", "might", "could", "will", "?", "!"]
-def pragmatic_features(text):
-    """Counts of modality & special words"""
-    text = text.lower()
-    return [text.count(w) for w in pragmatic_words]
-
-# ============================
-# Train & Evaluate All Models
-# ============================
-def evaluate_models(X_features, y):
-    results = {}
-    models = {
-        "Naive Bayes": MultinomialNB(),
-        "Decision Tree": DecisionTreeClassifier(),
-        "Logistic Regression": LogisticRegression(max_iter=200),
-        "SVM": SVC()
-    }
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_features, y, test_size=0.2, random_state=42
+    st.title('🧠 NLP Phase vs ML Model Comparator')
+    st.markdown(
+        """
+        This app lets you **compare multiple NLP preprocessing phases** (Lexical, Semantic, Synaptic, Pragmatic, Disclosure Integration) 
+        across **different ML classifiers**. 🚀
+        
+        Upload your dataset, pick a text + label column, choose a model, and visualize results!
+        """
     )
 
-    for name, model in models.items():
+    with st.sidebar:
+        st.header('⚙️ Configuration')
+        with st.expander("📂 Dataset Options", expanded=True):
+            uploaded_file = st.file_uploader('Upload CSV file', type=['csv'])
+            sample_n = st.number_input('Max rows to use (0 = all)', min_value=0, value=2000, step=500)
+
+        with st.expander("🤖 Model Options", expanded=True):
+            classifier_name = st.selectbox('Choose ML algorithm', [
+                'Naive Bayes Classification',
+                'Decision Tree Classification',
+                'Support Vector Machine',
+                'Logistic Regression',
+                'K - Nearest Neighbour'
+            ])
+
+        run_button = st.button('🚀 Run Experiment')
+
+    # load dataframe
+    df = None
+    if uploaded_file is not None:
         try:
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            acc = accuracy_score(y_test, y_pred) * 100
-            results[name] = acc
+            df = pd.read_csv(uploaded_file)
         except Exception as e:
-            results[name] = None
+            st.error(f"❌ Error reading uploaded file: {e}")
+            return
+    else:
+        default_path = '/mnt/data/politifact_full.csv'
+        try:
+            df = pd.read_csv(default_path)
+            st.info(f"📂 Loaded default dataset from {default_path}")
+        except Exception:
+            st.warning('⚠️ Please upload a CSV file (or place politifact_full.csv at /mnt/data).')
 
-    return results
+    if df is not None:
+        st.subheader('👀 Data Preview')
+        st.write('Shape: ', df.shape)
+        st.dataframe(df.head())
 
-# ============================
-# Streamlit UI
-# ============================
-st.title("🧠 Phase-wise NLP Analysis with Model Comparison")
+        cols = df.columns.tolist()
+        text_col = st.selectbox('📜 Select Text Column (input)', cols, index=0)
+        label_col = st.selectbox('🏷️ Select Label Column (target)', cols, index=min(1, len(cols)-1))
 
-uploaded_file = st.file_uploader("📂 Upload a CSV file", type=["csv"])
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.write("### 📊 Data Preview", df.head())
+        if run_button:
+            data = df[[text_col, label_col]].dropna()
+            if sample_n and sample_n > 0:
+                data = data.sample(min(sample_n, len(data)), random_state=42)
+            data = data.reset_index(drop=True)
 
-    text_col = st.selectbox("Select Text Column:", df.columns)
-    target_col = st.selectbox("Select Target Column:", df.columns)
+            X = data[text_col].astype(str)
+            y_raw = data[label_col]
 
-    phase = st.radio("🔎 Select NLP Phase:", [
-        "Lexical & Morphological",
-        "Syntactic",
-        "Semantic",
-        "Discourse",
-        "Pragmatic"
-    ])
+            le = LabelEncoder()
+            try:
+                y = le.fit_transform(y_raw.astype(str))
+            except Exception:
+                y = y_raw
 
-    if st.button("🚀 Run Model Comparison"):
-        X = df[text_col].astype(str)
-        y = df[target_col]
+            if len(np.unique(y)) < 2:
+                st.error('❌ Need at least two classes in the target label.')
+                return
 
-        # Feature Extraction
-        if phase == "Lexical & Morphological":
-            X_processed = X.apply(lexical_preprocess)
-            X_features = CountVectorizer().fit_transform(X_processed)
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=0.2, stratify=y, random_state=42
+            )
 
-        elif phase == "Syntactic":
-            X_processed = X.apply(syntactic_features)
-            X_features = CountVectorizer().fit_transform(X_processed)
+            phases = ['Lexical', 'Semantic', 'Synaptic', 'Pragmatic', 'Discloser Integration']
+            results = {}
 
-        elif phase == "Semantic":
-            X_features = pd.DataFrame(X.apply(semantic_features).tolist(),
-                                      columns=["polarity", "subjectivity"])
+            progress = st.progress(0)
+            for i, phase in enumerate(phases, start=1):
+                with st.spinner(f'Training {phase} pipeline with {classifier_name}...'):
+                    try:
+                        res = evaluate_phase(phase, classifier_name, X_train, X_test, y_train, y_test)
+                        results[phase] = res
+                    except Exception as e:
+                        st.error(f'Error while processing phase {phase}: {e}')
+                        results[phase] = {'accuracy': 0.0, 'error': str(e)}
+                progress.progress(int(i/len(phases)*100))
 
-        elif phase == "Discourse":
-            X_processed = X.apply(discourse_features)
-            X_features = CountVectorizer().fit_transform(X_processed)
+            # --- Results Tabs ---
+            tab1, tab2, tab3 = st.tabs(["📊 Accuracy", "📑 Reports", "🔢 Confusion Matrices"])
 
-        elif phase == "Pragmatic":
-            X_features = pd.DataFrame(X.apply(pragmatic_features).tolist(),
-                                      columns=pragmatic_words)
+            with tab1:
+                st.subheader('📊 Accuracy Comparison')
+                accs = {p: float(results[p]['accuracy']) if 'accuracy' in results[p] else 0.0 for p in phases}
+                acc_df = pd.DataFrame.from_dict(accs, orient='index', columns=['accuracy']).sort_values('accuracy', ascending=False)
+                col1, col2 = st.columns([1,2])
+                with col1:
+                    st.table(acc_df)
+                with col2:
+                    st.bar_chart(acc_df['accuracy'])
 
-        # Evaluate Models
-        with st.spinner("Training models..."):
-            results = evaluate_models(X_features, y)
+            with tab2:
+                st.subheader('📑 Classification Reports')
+                for phase in phases:
+                    st.markdown(f"### 🔹 {phase}")
+                    item = results[phase]
+                    if 'error' in item:
+                        st.error(f"Phase failed: {item['error']}")
+                        continue
+                    report_df = pd.DataFrame(item['report']).transpose()
+                    st.dataframe(report_df)
 
-        # Convert results to DataFrame
-        results_df = pd.DataFrame([
-            {"Model": k, "Accuracy": v} for k, v in results.items() if v is not None
-        ])
-        results_df = results_df.sort_values(by="Accuracy", ascending=False).reset_index(drop=True)
+            with tab3:
+                st.subheader('🔢 Confusion Matrices')
+                for phase in phases:
+                    st.markdown(f"### 🔹 {phase}")
+                    item = results[phase]
+                    if 'error' in item:
+                        st.error(f"Phase failed: {item['error']}")
+                        continue
+                    st.write(item['confusion_matrix'])
 
-        # Display results
-        st.subheader("📈 Model Comparison Results")
-        st.dataframe(results_df)
+    st.markdown('---')
+    st.markdown('✅ **Notes & Tips**')
+    st.markdown(
+        """
+        - 🚫 Avoids `nltk.word_tokenize`, so no `punkt_tab` errors.
+        - Use fewer rows (e.g., 1000–2000) for quicker tests.
+        - Try different ML models in sidebar for performance comparison.
+        - If you’d like caching or per-class metrics visualization → let me know! 🎯
+        """
+    )
 
-        # Bar chart
-        if not results_df.empty:
-            st.bar_chart(data=results_df.set_index("Model"))
-        else:
-            st.warning("⚠️ No valid results. Check your dataset and labels.")
+if __name__ == '__main__':
+    main()
