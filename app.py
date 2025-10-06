@@ -83,16 +83,19 @@ def main():
             "Accuracy (%)": [round(v*100,2) for v in results.values()]
         }).sort_values("Accuracy (%)", ascending=False).reset_index(drop=True)
         st.dataframe(leaderboard)
-
         st.bar_chart(leaderboard.set_index("Model")["Accuracy (%)"])
 
-        # Show classification report for best model
+        # Show classification report for best model safely
         best_model_name = leaderboard.iloc[0]["Model"]
         st.success(f"🎯 Best Model: {best_model_name} with Accuracy {leaderboard.iloc[0]['Accuracy (%)']}%")
         best_model = models[best_model_name]
         y_pred_best = best_model.predict(X_test_vec)
+
+        # Fix for ValueError in classification_report
+        labels_in_test = np.unique(y_test)
+        target_names = [le.classes_[i] for i in labels_in_test]
         st.subheader(f"📄 Classification Report for {best_model_name}")
-        st.text(classification_report(y_test, y_pred_best, target_names=le.classes_))
+        st.text(classification_report(y_test, y_pred_best, labels=labels_in_test, target_names=target_names))
 
         st.balloons()
 
