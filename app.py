@@ -1,14 +1,11 @@
 """
 streamlit_nlp_models_app.py
 
-Updated Streamlit app (large / full version) that:
+Updated Streamlit app (safe & enhanced):
 - Implements five ML classifiers (NB, Decision Tree, SVM, Logistic, KNN)
 - Implements five NLP phases (Lexical, Semantic, Synaptic, Pragmatic, Discloser Integration)
-- Uses NLTK for lemmatization, POS tagging and sentiment (VADER) BUT avoids nltk.word_tokenize
-  (so it won't trigger punkt/punkt_tab lookup errors on Streamlit)
-- Uses a regex tokenizer and a safe POS tagger wrapper to avoid averaged_perceptron_* lookup issues
-- Trains on user-uploaded CSV or /mnt/data/politifact_full.csv if present
-- Visualizes accuracy per phase and detailed reports
+- Auto-handles stratify errors (rare labels)
+- Uses regex tokenization (no punkt errors)
 """
 
 import streamlit as st
@@ -37,13 +34,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # ------------------ NLTK downloads (safe) ------------------
-# We keep required downloads but avoid tokenizers that cause punkt_tab lookups by not using word_tokenize.
 nltk.download('wordnet', quiet=True)
 nltk.download('omw-1.4', quiet=True)
 nltk.download('stopwords', quiet=True)
 nltk.download('vader_lexicon', quiet=True)
-
-# Attempt to ensure POS taggers are available under either name (some environments expect _eng)
 try:
     nltk.download('averaged_perceptron_tagger', quiet=True)
 except Exception:
@@ -53,17 +47,14 @@ try:
 except Exception:
     pass
 
-# ------------------ Globals ------------------
 STOPWORDS = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
 # ------------------ Safe utilities ------------------
 def safe_pos_tag(tokens):
-    """POS tagger that retries by downloading tagger resources if necessary."""
     try:
         return nltk.pos_tag(tokens)
     except LookupError:
-        # try to download both possible names then retry
         nltk.download('averaged_perceptron_tagger', quiet=True)
         try:
             return nltk.pos_tag(tokens)
@@ -72,7 +63,6 @@ def safe_pos_tag(tokens):
             return nltk.pos_tag(tokens)
 
 def get_wordnet_pos(treebank_tag: str):
-    """Map POS tag to WordNet POS for lemmatization."""
     if treebank_tag.startswith('J'):
         return wordnet.ADJ
     elif treebank_tag.startswith('V'):
@@ -85,34 +75,26 @@ def get_wordnet_pos(treebank_tag: str):
         return wordnet.NOUN
 
 def clean_text(text: str) -> str:
-    """Lowercase, remove urls, html tags, keep letters and spaces, collapse whitespace."""
     text = str(text or "")
     text = text.lower()
     text = re.sub(r'https?://\S+|www\.\S+', ' ', text)
     text = re.sub(r'<.*?>', ' ', text)
-    text = re.sub(r'[^a-z\s]', ' ', text)  # only letters and spaces
+    text = re.sub(r'[^a-z\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def regex_tokenize(text: str):
-    """Lightweight tokenizer that does not depend on punkt.
-    Returns a list of lowercased alphabetic tokens (no stopwords)"""
     text = clean_text(text)
     if not text:
         return []
-    # split by whitespace because clean_text removed non-letters already
     tokens = text.split()
-    # filter stopwords and single-letter tokens
     tokens = [t for t in tokens if t not in STOPWORDS and len(t) > 1]
     return tokens
 
-# ------------------ Tokenizers used by vectorizers ------------------
 def simple_tokenize(text: str):
-    """Used for lexical-phase vectorizers: basic cleaning + stopword removal."""
     return regex_tokenize(text)
 
 def lemma_tokenize(text: str):
-    """Lemmatize tokens using WordNet POS tags (avoid using word_tokenize)."""
     text = clean_text(text)
     if not text:
         return []
@@ -127,7 +109,6 @@ def lemma_tokenize(text: str):
     return lemmas
 
 def pos_tokenize(text: str):
-    """Return tokens annotated with POS tag (e.g. 'word_NN') for syntactic features."""
     text = clean_text(text)
     if not text:
         return []
@@ -137,7 +118,6 @@ def pos_tokenize(text: str):
     return tokens_with_pos
 
 def lemma_synonym_tokenize(text: str):
-    """Lemmatize and add (at most) one synonym per token to do light semantic expansion."""
     tokens = lemma_tokenize(text)
     expanded = []
     for token in tokens:
@@ -148,7 +128,6 @@ def lemma_synonym_tokenize(text: str):
                 for lemma in syns[0].lemmas():
                     name = lemma.name().replace('_', ' ')
                     if name != token:
-                        # add only one synonym to avoid blowing up vocabulary
                         expanded.append(name)
                         break
         except Exception:
@@ -157,7 +136,6 @@ def lemma_synonym_tokenize(text: str):
 
 # ------------------ sklearn Transformers ------------------
 class SentimentTransformer(BaseEstimator, TransformerMixin):
-    """Create numeric sentiment/document features with VADER + simple stats."""
     def __init__(self):
         self.sid = SentimentIntensityAnalyzer()
 
@@ -168,27 +146,12 @@ class SentimentTransformer(BaseEstimator, TransformerMixin):
         feats = []
         for doc in X:
             s = self.sid.polarity_scores(str(doc))
-            compound_scaled = (s['compound'] + 1.0) / 2.0  # 0..1
+            compound_scaled = (s['compound'] + 1.0) / 2.0
             words = re.findall(r"[a-z]+", str(doc).lower())
             doc_len = len(words)
             avg_word_len = np.mean([len(w) for w in words]) if doc_len > 0 else 0.0
             feats.append([s['neg'], s['neu'], s['pos'], compound_scaled, doc_len, avg_word_len])
         return sparse.csr_matrix(np.array(feats))
-
-class TextSelector(BaseEstimator, TransformerMixin):
-    """If pipeline input is a DataFrame, select a column by key and return its values."""
-    def __init__(self, key):
-        self.key = key
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        # Accept numpy array or pandas series too
-        if isinstance(X, (pd.DataFrame, pd.Series)):
-            return X[self.key].astype(str).values
-        else:
-            return np.array(X).astype(str)
 
 # ------------------ classifier factory ------------------
 def get_classifier(name: str):
@@ -209,26 +172,21 @@ def get_classifier(name: str):
 # ------------------ pipelines per NLP phase ------------------
 def build_pipeline(phase: str, classifier_name: str):
     clf = get_classifier(classifier_name)
-    # When we pass a tokenizer to vectorizer, set token_pattern=None and lowercase=False
     if phase == 'Lexical':
         vect = CountVectorizer(tokenizer=simple_tokenize, token_pattern=None, lowercase=False)
         return Pipeline([('vect', vect), ('clf', clf)])
-
     elif phase == 'Semantic':
         vect = TfidfVectorizer(tokenizer=lemma_synonym_tokenize, token_pattern=None, lowercase=False)
         return Pipeline([('vect', vect), ('clf', clf)])
-
     elif phase == 'Synaptic':
         vect = TfidfVectorizer(tokenizer=pos_tokenize, token_pattern=None, lowercase=False, ngram_range=(1,2), max_features=50000)
         return Pipeline([('vect', vect), ('clf', clf)])
-
     elif phase == 'Pragmatic':
         union = FeatureUnion([
             ('tfidf', TfidfVectorizer(tokenizer=simple_tokenize, token_pattern=None, lowercase=False, max_features=50000)),
             ('sent', SentimentTransformer())
         ])
         return Pipeline([('union', union), ('clf', clf)])
-
     elif phase == 'Discloser Integration':
         union = FeatureUnion([
             ('lex', TfidfVectorizer(tokenizer=simple_tokenize, token_pattern=None, lowercase=False, max_features=30000)),
@@ -248,27 +206,18 @@ def evaluate_phase(phase, classifier_name, X_train, X_test, y_train, y_test):
     acc = accuracy_score(y_test, preds)
     report = classification_report(y_test, preds, zero_division=0, output_dict=True)
     cm = confusion_matrix(y_test, preds)
-    return {
-        'pipeline': pipe,
-        'accuracy': acc,
-        'report': report,
-        'confusion_matrix': cm,
-        'preds': preds
-    }
+    return {'pipeline': pipe, 'accuracy': acc, 'report': report, 'confusion_matrix': cm, 'preds': preds}
 
 # ------------------ Streamlit UI ------------------
 def main():
     st.set_page_config(page_title='🧠 NLP Phase vs ML Model Comparator', page_icon="🤖", layout='wide')
     st.title('🧠 NLP Phase vs ML Model Comparator')
-    st.markdown(
-        """
-        Upload your CSV, pick the text & label columns, choose one ML algorithm,
-        and the app will train it using **five different NLP phases**.  
-        Compare accuracy and see detailed reports! 🚀
-        """
-    )
+    st.markdown("""
+    Upload your CSV, pick the text & label columns, choose one ML algorithm,
+    and the app will train it using **five different NLP phases**.  
+    Compare accuracy and see detailed reports! 🚀
+    """)
 
-    # --- Sidebar ---
     with st.sidebar:
         st.header('⚙️ Configuration')
         uploaded_file = st.file_uploader('Upload CSV file', type=['csv'])
@@ -282,7 +231,6 @@ def main():
         ])
         run_button = st.button('🚀 Run Experiment')
 
-    # --- Dataset ---
     df = None
     if uploaded_file is not None:
         try:
@@ -325,7 +273,30 @@ def main():
                 st.error('❌ Need at least two classes in the target label.')
                 return
 
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+            # --- Safe train/test split ---
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=0.2, stratify=y, random_state=42
+                )
+            except ValueError as e:
+                if "least populated class" in str(e):
+                    st.warning("⚠️ Some labels have only one sample — removing them and retrying split.")
+                    y_series = pd.Series(y)
+                    y_counts = y_series.value_counts()
+                    valid_classes = y_counts[y_counts > 1].index
+                    mask = y_series.isin(valid_classes)
+                    X = X[mask]
+                    y = y_series[mask].values
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=0.2, stratify=y, random_state=42
+                    )
+                else:
+                    st.warning("⚠️ Stratified split failed — using random split.")
+                    X_train, X_test, y_train, y_test = train_test_split(
+                        X, y, test_size=0.2, random_state=42
+                    )
+
+            st.info(f"✅ Using {len(X)} samples across {len(np.unique(y))} unique labels after cleaning.")
 
             phases = ['Lexical', 'Semantic', 'Synaptic', 'Pragmatic', 'Discloser Integration']
             results = {}
@@ -336,9 +307,8 @@ def main():
                 with st.spinner(f'Training {phase} with {classifier_name}...'):
                     res = evaluate_phase(phase, classifier_name, X_train, X_test, y_train, y_test)
                     results[phase] = res
-                progress.progress(int(i/total*100))
+                progress.progress(int(i / total * 100))
 
-            # --- Results Tabs ---
             tab1, tab2, tab3 = st.tabs(["📊 Accuracy", "📑 Reports", "🔢 Confusion Matrices"])
 
             with tab1:
