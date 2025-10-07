@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re, string, emoji, spacy
-from sklearn.model_selection import train_test_split, GridSearchCV
+import re, string
+
+from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report
@@ -14,23 +15,42 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, chi2
 from imblearn.over_sampling import SMOTE
 
-nlp = spacy.load("en_core_web_sm")
+# 🧠 Optional imports (safe for Streamlit)
+try:
+    import emoji
+except ImportError:
+    emoji = None
+
+try:
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+except:
+    nlp = None
+
 
 # ------------------ Text Cleaning ------------------
 def clean_text(text):
     text = text.lower()
-    text = re.sub(r"http\S+|www\S+|https\S+", "", text)   # remove URLs
-    text = re.sub(r"\d+", "", text)                       # remove numbers
-    text = emoji.replace_emoji(text, replace="")          # remove emojis
-    text = text.translate(str.maketrans("", "", string.punctuation))  # remove punctuation
-    doc = nlp(text)
-    lemmatized = " ".join([token.lemma_ for token in doc if not token.is_stop])
-    return lemmatized.strip()
+    text = re.sub(r"http\S+|www\S+|https\S+", "", text)  # URLs
+    text = re.sub(r"\d+", "", text)                      # Numbers
+    if emoji:
+        text = emoji.replace_emoji(text, replace="")     # Emojis
+    text = text.translate(str.maketrans("", "", string.punctuation))  # Punctuation
+
+    # Lemmatization (if spaCy is available)
+    if nlp:
+        doc = nlp(text)
+        text = " ".join([token.lemma_ for token in doc if not token.is_stop])
+    else:
+        # fallback simple cleanup
+        text = " ".join([word for word in text.split() if len(word) > 2])
+    return text.strip()
+
 
 # ------------------ Streamlit App ------------------
 def main():
     st.set_page_config(page_title="🚀 NLP Model Accuracy Comparator (Pro)", layout="wide")
-    st.title("🧠 NLP Model Accuracy Comparator — Optimized Version")
+    st.title("🧠 NLP Model Accuracy Comparator — Streamlit Cloud Safe")
 
     uploaded_file = st.file_uploader("📂 Upload your CSV dataset", type=["csv"])
     if uploaded_file is None:
@@ -68,20 +88,18 @@ def main():
         st.info("🔠 Applying TF-IDF Vectorization...")
         vectorizer = TfidfVectorizer(
             max_features=10000,
-            ngram_range=(1,3),
+            ngram_range=(1, 3),
             sublinear_tf=True,
             stop_words="english"
         )
         X_train_vec = vectorizer.fit_transform(X_train)
         X_test_vec = vectorizer.transform(X_test)
 
-        # Feature selection
         st.info("📊 Selecting top features (Chi2)...")
         selector = SelectKBest(chi2, k=min(8000, X_train_vec.shape[1]))
         X_train_vec = selector.fit_transform(X_train_vec, y_train)
         X_test_vec = selector.transform(X_test_vec)
 
-        # Balance classes
         sm = SMOTE(random_state=42)
         X_train_res, y_train_res = sm.fit_resample(X_train_vec, y_train)
 
@@ -128,6 +146,7 @@ def main():
         st.text(classification_report(y_test, y_pred_best, labels=labels_in_test, target_names=target_names))
 
         st.balloons()
+
 
 if __name__ == "__main__":
     main()
