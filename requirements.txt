@@ -5,5 +5,7 @@ scikit-learn
 imblearn
 emoji
 spacy
+nltk
+
 
 
