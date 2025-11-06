@@ -12,6 +12,8 @@ textblob
 # Machine Learning
 scikit-learn
 matplotlib
+imbalanced-learn==0.12.3
+
 
 
 
