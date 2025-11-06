@@ -1,11 +1,18 @@
+
 streamlit
+
+# Data handling
 pandas
 numpy
-scikit-learn
-imblearn
-emoji
+
+# NLP
 spacy
-nltk
+textblob
+
+# Machine Learning
+scikit-learn
+matplotlib
+
 
 
 
