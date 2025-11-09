@@ -1,197 +1,120 @@
-# ============================================
-# 🌈 Streamlit NLP Phase-wise Model Comparison (Final Stable Version)
-# ============================================
-
 import streamlit as st
 import pandas as pd
-import re
+import numpy as np
 import nltk
-from nltk.tokenize import word_tokenize, sent_tokenize
+import re
+import string
+
 from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
-from nltk import pos_tag
-from textblob import TextBlob
 from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score
-import matplotlib.pyplot as plt
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# ============================
-# NLTK Setup (Auto-fix LookupError)
-# ============================
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-
-try:
-    nltk.data.find('tokenizers/punkt_tab')
-except LookupError:
-    nltk.download('punkt_tab', quiet=True)
-
+# --------------------------
+# 📦 Ensure NLTK dependencies are available
+# --------------------------
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 nltk.download('stopwords', quiet=True)
 nltk.download('wordnet', quiet=True)
 nltk.download('averaged_perceptron_tagger', quiet=True)
 
-stop_words = set(stopwords.words('english'))
-lemmatizer = WordNetLemmatizer()
-
-# ============================
-# Text Cleaning & Feature Extraction
-# ============================
-def clean_text(text):
-    text = re.sub(r"http\S+|www\S+", "", text)
-    text = re.sub(r"[^a-zA-Z\s]", " ", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip().lower()
-
+# --------------------------
+# ⚙️ Text Preprocessing
+# --------------------------
 def lexical_preprocess(text):
-    text = clean_text(text)
-    try:
-        tokens = word_tokenize(text)
-    except LookupError:
-        nltk.download('punkt')
-        tokens = word_tokenize(text)
-    tokens = [lemmatizer.lemmatize(t) for t in tokens if t.isalpha() and t not in stop_words]
-    return " ".join(tokens)
-
-def syntactic_features(text):
-    try:
-        tokens = word_tokenize(text)
-    except LookupError:
-        nltk.download('punkt')
-        tokens = word_tokenize(text)
-    pos_tags = pos_tag(tokens)
-    return " ".join([tag for _, tag in pos_tags])
-
-def semantic_features(text):
-    blob = TextBlob(text)
-    return [blob.sentiment.polarity, blob.sentiment.subjectivity]
-
-def discourse_features(text):
-    try:
-        sents = sent_tokenize(text)
-    except LookupError:
-        nltk.download('punkt')
-        sents = sent_tokenize(text)
-    return f"{len(sents)} {' '.join([s.split()[0] for s in sents if s])}"
-
-pragmatic_words = ["must", "should", "might", "could", "will", "?", "!"]
-def pragmatic_features(text):
+    if not isinstance(text, str):
+        return ""
     text = text.lower()
-    return [text.count(w) for w in pragmatic_words]
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
+    text = text.translate(str.maketrans('', '', string.punctuation))
 
-# ============================
-# Model Evaluation (No imblearn)
-# ============================
+    try:
+        tokens = word_tokenize(text)
+    except LookupError:
+        nltk.download('punkt')
+        tokens = word_tokenize(text)
+
+    tokens = [word for word in tokens if word.isalpha()]
+    tokens = [word for word in tokens if word not in stopwords.words('english')]
+
+    lemmatizer = WordNetLemmatizer()
+    tokens = [lemmatizer.lemmatize(word) for word in tokens]
+
+    return ' '.join(tokens)
+
+# --------------------------
+# 🧠 Model Evaluation Function
+# --------------------------
 def evaluate_models(X_features, y):
-    results = {}
-    models = {
-        "Naive Bayes": MultinomialNB(),
-        "Decision Tree": DecisionTreeClassifier(class_weight='balanced'),
-        "Logistic Regression": LogisticRegression(max_iter=300, class_weight='balanced'),
-        "Random Forest": RandomForestClassifier(n_estimators=150, random_state=42, class_weight='balanced'),
-        "SVM": SVC(kernel='linear', probability=True, class_weight='balanced')
-    }
+    # Handle small-class issue safely
+    if y.value_counts().min() < 2:
+        st.warning("⚠️ One or more target classes have less than 2 samples — skipping stratified split for safety.")
+        stratify_opt = None
+    else:
+        stratify_opt = y
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X_features, y, test_size=0.2, random_state=42, stratify=y
+        X_features, y, test_size=0.2, random_state=42, stratify=stratify_opt
     )
 
-    for name, model in models.items():
-        try:
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            acc = accuracy_score(y_test, y_pred) * 100
-            results[name] = round(acc, 2)
-        except Exception as e:
-            results[name] = f"Error: {str(e)}"
-    return results
+    # Logistic Regression with balanced class weights (instead of SMOTE)
+    model = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
 
-# ============================
-# Streamlit UI
-# ============================
-st.set_page_config(page_title="NLP Phase-wise Analysis", layout="wide")
-st.title("🧠 NLP Phase-wise Model Comparison (Stable Version)")
-st.markdown(
-    "<p style='color:gray;'>Upload a dataset, choose an NLP phase, and compare multiple ML models with improved preprocessing.</p>",
-    unsafe_allow_html=True
-)
+    acc = accuracy_score(y_test, y_pred)
+    cls_report = classification_report(y_test, y_pred, output_dict=True)
+    conf_mat = confusion_matrix(y_test, y_pred)
 
-with st.sidebar:
-    st.header("📂 Upload & Settings")
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
-    st.write("---")
+    return {
+        'accuracy': acc,
+        'report': cls_report,
+        'confusion_matrix': conf_mat,
+    }
 
-if uploaded_file:
+# --------------------------
+# 🌐 Streamlit UI
+# --------------------------
+st.set_page_config(page_title="🧠 NLP Classifier", layout="wide")
+
+st.title("🧠 NLP Text Classification App")
+st.write("Upload your dataset and automatically train a Logistic Regression model with TF-IDF features.")
+
+uploaded_file = st.file_uploader("📂 Upload a CSV file", type=["csv"])
+
+if uploaded_file is not None:
     df = pd.read_csv(uploaded_file)
-    st.subheader("📊 Data Preview")
-    st.dataframe(df.head())
+    st.write("### 🔍 Preview of Dataset", df.head())
 
-    col1, col2 = st.columns(2)
-    with col1:
-        text_col = st.selectbox("Select Text Column", df.columns)
-    with col2:
-        target_col = st.selectbox("Select Target Column", df.columns)
+    text_col = st.selectbox("📝 Select Text Column", df.columns)
+    target_col = st.selectbox("🎯 Select Target Column", df.columns)
 
-    phase = st.selectbox(
-        "🔎 Choose NLP Phase",
-        ["Lexical & Morphological", "Syntactic", "Semantic", "Discourse", "Pragmatic"]
-    )
+    if st.button("🚀 Train Model"):
+        with st.spinner("Preprocessing text and training model..."):
+            X = df[text_col].astype(str)
+            y = df[target_col]
 
-    if st.button("🚀 Run Model Comparison"):
-        X = df[text_col].astype(str)
-        y = df[target_col]
-
-        # --- Feature extraction ---
-        if phase == "Lexical & Morphological":
+            # Text preprocessing
             X_processed = X.apply(lexical_preprocess)
-            vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2))
+
+            # TF-IDF Vectorization
+            vectorizer = TfidfVectorizer(max_features=5000)
             X_features = vectorizer.fit_transform(X_processed)
 
-        elif phase == "Syntactic":
-            X_processed = X.apply(syntactic_features)
-            X_features = TfidfVectorizer(max_features=4000).fit_transform(X_processed)
+            # Model evaluation
+            results = evaluate_models(X_features, y)
 
-        elif phase == "Semantic":
-            X_features = pd.DataFrame(X.apply(semantic_features).tolist(),
-                                      columns=["polarity", "subjectivity"])
-            scaler = StandardScaler()
-            X_features = scaler.fit_transform(X_features)
+        st.success("✅ Model trained successfully!")
+        st.write(f"**Accuracy:** {results['accuracy']:.2f}")
 
-        elif phase == "Discourse":
-            X_processed = X.apply(discourse_features)
-            X_features = TfidfVectorizer(max_features=4000).fit_transform(X_processed)
+        st.write("### 📊 Classification Report")
+        st.dataframe(pd.DataFrame(results['report']).transpose())
 
-        else:  # Pragmatic
-            X_features = pd.DataFrame(X.apply(pragmatic_features).tolist(),
-                                      columns=pragmatic_words)
-            scaler = StandardScaler()
-            X_features = scaler.fit_transform(X_features)
-
-        # --- Evaluate models ---
-        results = evaluate_models(X_features, y)
-        results_df = pd.DataFrame(list(results.items()), columns=["Model", "Accuracy"])
-        results_df = results_df[results_df["Accuracy"].apply(lambda x: isinstance(x, (int, float)))]
-        results_df = results_df.sort_values(by="Accuracy", ascending=False)
-
-        st.subheader("🏆 Model Accuracy")
-        st.table(results_df)
-
-        # --- Plot ---
-        plt.figure(figsize=(7, 4))
-        plt.bar(results_df["Model"], results_df["Accuracy"], color="#4CAF50", alpha=0.8)
-        plt.ylabel("Accuracy (%)")
-        plt.title(f"Performance on {phase}")
-        for i, v in enumerate(results_df["Accuracy"]):
-            plt.text(i, v + 1, f"{v:.1f}%", ha='center')
-        st.pyplot(plt)
-
+        st.write("### 🧩 Confusion Matrix")
+        st.write(results['confusion_matrix'])
 else:
-    st.info("⬅️ Please upload a CSV file to start.")
+    st.info("📤 Please upload a CSV file to begin.")
