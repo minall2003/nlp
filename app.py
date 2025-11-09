@@ -1,5 +1,5 @@
 # ============================================
-# 🌈 Streamlit NLP Phase-wise Model Comparison (Optimized)
+# 🌈 Streamlit NLP Phase-wise Model Comparison (Final Stable Version)
 # ============================================
 
 import streamlit as st
@@ -19,38 +19,54 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
-from imblearn.over_sampling import SMOTE
+from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 
 # ============================
-# NLTK Setup
+# NLTK Setup (Auto-fix LookupError)
 # ============================
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('averaged_perceptron_tagger')
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    nltk.download('punkt_tab', quiet=True)
+
+nltk.download('stopwords', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('averaged_perceptron_tagger', quiet=True)
 
 stop_words = set(stopwords.words('english'))
 lemmatizer = WordNetLemmatizer()
 
 # ============================
-# Cleaning & Feature Functions
+# Text Cleaning & Feature Extraction
 # ============================
 def clean_text(text):
     text = re.sub(r"http\S+|www\S+", "", text)
-    text = re.sub(r"[^a-zA-Z\s]", "", text)
+    text = re.sub(r"[^a-zA-Z\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().lower()
 
 def lexical_preprocess(text):
     text = clean_text(text)
-    tokens = word_tokenize(text)
+    try:
+        tokens = word_tokenize(text)
+    except LookupError:
+        nltk.download('punkt')
+        tokens = word_tokenize(text)
     tokens = [lemmatizer.lemmatize(t) for t in tokens if t.isalpha() and t not in stop_words]
     return " ".join(tokens)
 
 def syntactic_features(text):
-    tokens = word_tokenize(text)
+    try:
+        tokens = word_tokenize(text)
+    except LookupError:
+        nltk.download('punkt')
+        tokens = word_tokenize(text)
     pos_tags = pos_tag(tokens)
     return " ".join([tag for _, tag in pos_tags])
 
@@ -59,7 +75,11 @@ def semantic_features(text):
     return [blob.sentiment.polarity, blob.sentiment.subjectivity]
 
 def discourse_features(text):
-    sents = sent_tokenize(text)
+    try:
+        sents = sent_tokenize(text)
+    except LookupError:
+        nltk.download('punkt')
+        sents = sent_tokenize(text)
     return f"{len(sents)} {' '.join([s.split()[0] for s in sents if s])}"
 
 pragmatic_words = ["must", "should", "might", "could", "will", "?", "!"]
@@ -68,26 +88,21 @@ def pragmatic_features(text):
     return [text.count(w) for w in pragmatic_words]
 
 # ============================
-# Model Evaluation
+# Model Evaluation (No imblearn)
 # ============================
 def evaluate_models(X_features, y):
     results = {}
     models = {
         "Naive Bayes": MultinomialNB(),
-        "Decision Tree": DecisionTreeClassifier(),
-        "Logistic Regression": LogisticRegression(max_iter=300),
-        "Random Forest": RandomForestClassifier(n_estimators=150, random_state=42),
-        "SVM": SVC(kernel='linear', probability=True)
+        "Decision Tree": DecisionTreeClassifier(class_weight='balanced'),
+        "Logistic Regression": LogisticRegression(max_iter=300, class_weight='balanced'),
+        "Random Forest": RandomForestClassifier(n_estimators=150, random_state=42, class_weight='balanced'),
+        "SVM": SVC(kernel='linear', probability=True, class_weight='balanced')
     }
 
-    X_train, X_test, y_train, y_test = train_test_split(X_features, y, test_size=0.2, random_state=42, stratify=y)
-
-    # Handle imbalance if any
-    try:
-        smote = SMOTE(random_state=42)
-        X_train, y_train = smote.fit_resample(X_train, y_train)
-    except:
-        pass
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_features, y, test_size=0.2, random_state=42, stratify=y
+    )
 
     for name, model in models.items():
         try:
@@ -103,8 +118,11 @@ def evaluate_models(X_features, y):
 # Streamlit UI
 # ============================
 st.set_page_config(page_title="NLP Phase-wise Analysis", layout="wide")
-st.title("🧠 NLP Phase-wise Model Comparison (Optimized)")
-st.markdown("<p style='color:gray;'>Upload a dataset, choose an NLP phase, and compare multiple ML models with improved preprocessing.</p>", unsafe_allow_html=True)
+st.title("🧠 NLP Phase-wise Model Comparison (Stable Version)")
+st.markdown(
+    "<p style='color:gray;'>Upload a dataset, choose an NLP phase, and compare multiple ML models with improved preprocessing.</p>",
+    unsafe_allow_html=True
+)
 
 with st.sidebar:
     st.header("📂 Upload & Settings")
@@ -131,10 +149,10 @@ if uploaded_file:
         X = df[text_col].astype(str)
         y = df[target_col]
 
-        # Feature extraction
+        # --- Feature extraction ---
         if phase == "Lexical & Morphological":
             X_processed = X.apply(lexical_preprocess)
-            vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1,2))
+            vectorizer = TfidfVectorizer(max_features=5000, ngram_range=(1, 2))
             X_features = vectorizer.fit_transform(X_processed)
 
         elif phase == "Syntactic":
@@ -157,22 +175,23 @@ if uploaded_file:
             scaler = StandardScaler()
             X_features = scaler.fit_transform(X_features)
 
-        # Evaluate models
+        # --- Evaluate models ---
         results = evaluate_models(X_features, y)
         results_df = pd.DataFrame(list(results.items()), columns=["Model", "Accuracy"])
-        results_df = results_df[results_df["Accuracy"].apply(lambda x: isinstance(x, (int,float)))]
+        results_df = results_df[results_df["Accuracy"].apply(lambda x: isinstance(x, (int, float)))]
         results_df = results_df.sort_values(by="Accuracy", ascending=False)
 
         st.subheader("🏆 Model Accuracy")
         st.table(results_df)
 
-        # Plot
+        # --- Plot ---
         plt.figure(figsize=(7, 4))
-        plt.bar(results_df["Model"], results_df["Accuracy"], color="#FF9800", alpha=0.8)
+        plt.bar(results_df["Model"], results_df["Accuracy"], color="#4CAF50", alpha=0.8)
         plt.ylabel("Accuracy (%)")
         plt.title(f"Performance on {phase}")
         for i, v in enumerate(results_df["Accuracy"]):
             plt.text(i, v + 1, f"{v:.1f}%", ha='center')
         st.pyplot(plt)
+
 else:
     st.info("⬅️ Please upload a CSV file to start.")
