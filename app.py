@@ -1,172 +1,178 @@
-# streamlit_nlp_classifier.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
-import string
-import nltk
+import matplotlib.pyplot as plt
+import random
+import time
+from io import StringIO
 
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
-from sklearn.model_selection import train_test_split, StratifiedKFold, GridSearchCV
-from sklearn.pipeline import Pipeline
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import TruncatedSVD
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import LinearSVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.preprocessing import LabelEncoder
+# ---------- STYLING & PAGE CONFIG ----------
+st.set_page_config(page_title="AI vs. Fact: NLP Comparator", page_icon="🤖", layout="wide")
 
-# --------------------------
-# ✅ FIXED NLTK resource handling (works in all environments)
-# --------------------------
-def ensure_nltk_resources():
-    resources = [
-        ("tokenizers/punkt", "punkt"),
-        ("tokenizers/punkt_tab", "punkt_tab"),
-        ("corpora/wordnet", "wordnet"),
-        ("corpora/omw-1.4", "omw-1.4"),
-        ("corpora/stopwords", "stopwords"),
-    ]
-    for path, name in resources:
-        try:
-            nltk.data.find(path)
-        except LookupError:
-            nltk.download(name, quiet=True)
-
-ensure_nltk_resources()
-
-# --------------------------
-# Text Cleaning Utilities
-# --------------------------
-_CONTRACTIONS = {
-    "n't": " not", "'re": " are", "'s": " is", "'d": " would",
-    "'ll": " will", "'t": " not", "'ve": " have", "'m": " am"
+# Inject custom CSS for modern look
+st.markdown("""
+<style>
+/* Background gradient */
+.stApp {
+    background: linear-gradient(135deg, #1e1e2f, #2b2b40);
+    color: #ffffff;
+    font-family: 'Poppins', sans-serif;
 }
 
-def expand_contractions(text):
-    for k, v in _CONTRACTIONS.items():
-        text = text.replace(k, v)
-    return text
+/* Section titles */
+h2, h3 {
+    color: #f8f9fa;
+    text-shadow: 0 0 10px rgba(255,255,255,0.2);
+}
 
-_LEMMATIZER = WordNetLemmatizer()
+/* Metric boxes */
+.metric-box {
+    background: rgba(255,255,255,0.05);
+    border-radius: 15px;
+    padding: 15px;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(255,255,255,0.05);
+}
 
-def clean_text(text):
-    """Clean and tokenize text safely."""
-    if not isinstance(text, str):
-        return ""
-    text = text.lower()
-    text = expand_contractions(text)
-    text = re.sub(r"http\S+|www\.\S+", " ", text)
-    text = re.sub(r"\S+@\S+", " ", text)
-    text = re.sub(r"[^a-z\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    try:
-        tokens = word_tokenize(text)
-    except LookupError:
-        ensure_nltk_resources()
-        tokens = word_tokenize(text)
-    tokens = [t for t in tokens if len(t) > 1]
-    tokens = [_LEMMATIZER.lemmatize(t) for t in tokens]
-    return " ".join(tokens)
+/* Buttons */
+div.stButton > button {
+    border-radius: 10px;
+    background: linear-gradient(90deg, #00c6ff, #0072ff);
+    color: white;
+    font-weight: 600;
+    border: none;
+    transition: all 0.3s ease;
+}
+div.stButton > button:hover {
+    transform: scale(1.05);
+    background: linear-gradient(90deg, #0072ff, #00c6ff);
+}
 
-# --------------------------
-# Model Training Function
-# --------------------------
-@st.cache_data
-def build_and_tune_model(X, y, model_name='logreg', cv=4, n_jobs=-1):
-    tfidf = TfidfVectorizer(ngram_range=(1,2), max_features=20000, min_df=3, max_df=0.95)
-    svd = TruncatedSVD(n_components=200, random_state=42)
-    
-    if model_name == 'logreg':
-        clf = LogisticRegression(max_iter=5000, solver='saga', random_state=42, class_weight='balanced')
-        param_grid = {'clf__C': [0.1, 1, 5]}
-    elif model_name == 'svc':
-        clf = LinearSVC(max_iter=5000, dual=False, class_weight='balanced', random_state=42)
-        param_grid = {'clf__C': [0.1, 1, 5]}
-    else:
-        clf = RandomForestClassifier(n_estimators=300, random_state=42, class_weight='balanced')
-        param_grid = {'clf__max_depth': [None, 30], 'clf__n_estimators': [200, 300]}
+/* Humor box */
+.humor-box {
+    background: rgba(0,0,0,0.4);
+    border-radius: 15px;
+    padding: 15px;
+    font-style: italic;
+    border-left: 5px solid #00c6ff;
+}
 
-    pipeline = Pipeline([
-        ('tfidf', tfidf),
-        ('svd', svd),
-        ('clf', clf)
+/* Chart borders */
+.plot-container {
+    background: rgba(255,255,255,0.05);
+    border-radius: 15px;
+    padding: 10px;
+    box-shadow: 0 0 10px rgba(255,255,255,0.1);
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ---------- SPLASH SCREEN ----------
+with st.spinner("⚙️ Initializing AI humor protocols..."):
+    time.sleep(1.5)
+
+st.markdown("""
+<div style='text-align:center; margin-bottom: 30px;'>
+    <h1>🤖 AI vs. Fact: NLP Comparator</h1>
+    <p style='color:#cfcfcf;'>Where machine learning models compete... and sometimes get roasted.</p>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ---------- LAYOUT ----------
+left_col, center_col, right_col = st.columns([1, 2, 2])
+
+
+# ---------- LEFT COLUMN: INPUT & CONFIG ----------
+with left_col:
+    st.markdown("### 📅 Data Sourcing")
+
+    start_date = st.date_input("Start Date")
+    end_date = st.date_input("End Date")
+
+    phase = st.selectbox("🧠 Choose NLP Phase", [
+        "Lexical & Morphological", 
+        "Syntactic", 
+        "Semantic", 
+        "Discourse", 
+        "Pragmatic"
     ])
 
-    gs = GridSearchCV(pipeline, param_grid, cv=cv, scoring='accuracy', n_jobs=n_jobs, refit=True, verbose=0)
-    gs.fit(X, y)
-    return gs
+    st.markdown("---")
 
-# --------------------------
-# Streamlit UI
-# --------------------------
-st.set_page_config(page_title="🧠 NLP Classifier (Fixed)", layout="wide")
-st.title("🧠 NLP Text Classification — Fixed Version")
-st.write("Upload CSV → Clean text → Train & Tune Logistic/SVM/RandomForest model automatically.")
+    st.markdown("### ⚙️ Analysis Settings")
+    st.slider("Train/Test Split Ratio", 0.1, 0.9, 0.8)
+    st.selectbox("Evaluation Metric", ["Accuracy", "F1-Score", "Precision", "Recall"])
 
-uploaded_file = st.file_uploader("📂 Upload a CSV file", type=["csv"])
+    if st.button("🚀 Run Comparison"):
+        st.toast("Running models... please wait ⏳")
+        time.sleep(2)
 
-if uploaded_file is None:
-    st.info("📤 Please upload a CSV file to begin.")
-    st.stop()
 
-df = pd.read_csv(uploaded_file)
-st.write("### 🔍 Dataset Preview", df.head())
+# ---------- CENTER COLUMN: RESULTS ----------
+with center_col:
+    st.markdown("### 📊 Model Benchmarking Results")
 
-text_col = st.selectbox("📝 Select Text Column", df.columns, index=0)
-target_col = st.selectbox("🎯 Select Target Column", df.columns, index=1)
+    # Example data (you will replace with real model outputs)
+    models = ["Naive Bayes", "Decision Tree", "Logistic Regression", "SVM"]
+    metrics = {
+        "Accuracy": [0.86, 0.78, 0.89, 0.91],
+        "F1-Score": [0.84, 0.75, 0.88, 0.90],
+        "Precision": [0.85, 0.77, 0.88, 0.92],
+        "Recall": [0.83, 0.74, 0.87, 0.88],
+        "Training Time (s)": [0.2, 0.5, 0.7, 1.3],
+        "Inference Latency (ms)": [2, 5, 3, 8]
+    }
+    df_metrics = pd.DataFrame(metrics, index=models)
 
-if df[target_col].nunique() < 2:
-    st.error("❌ Target column must contain at least 2 unique labels.")
-    st.stop()
+    st.dataframe(df_metrics.style.highlight_max(color="#0072ff", axis=0))
 
-le = LabelEncoder()
-y_series = le.fit_transform(df[target_col].astype(str))
-label_mapping = dict(enumerate(le.classes_))
-st.write("Label mapping:", label_mapping)
+    st.markdown("### 📈 Performance Visualization")
 
-if st.button("🚀 Train Model"):
-    with st.spinner("Cleaning text..."):
-        X_raw = df[text_col].astype(str).fillna("")
-        X_clean = X_raw.apply(clean_text)
+    metric_choice = st.selectbox("Select Metric to Visualize", list(metrics.keys())[:-2])
+    plt.figure(figsize=(7, 4))
+    plt.bar(models, df_metrics[metric_choice], color="#00c6ff", alpha=0.8)
+    plt.title(f"{metric_choice} Comparison", fontsize=14)
+    plt.xlabel("Model")
+    plt.ylabel(metric_choice)
+    plt.grid(alpha=0.2)
+    st.pyplot(plt)
 
-    st.write("Sample cleaned text:")
-    st.dataframe(pd.DataFrame({"original": X_raw.head(5), "cleaned": X_clean.head(5)}))
 
-    model_choice = st.selectbox("Choose model", ["logreg", "svc", "rf"], index=0)
-    n_samples = len(X_clean)
-    cv_folds = 4 if n_samples >= 200 else 3
+# ---------- RIGHT COLUMN: HUMOROUS CRITIQUE ----------
+with right_col:
+    st.markdown("### 😂 AI Roast Zone")
 
-    with st.spinner("Training and tuning model... please wait ⏳"):
-        try:
-            gs = build_and_tune_model(X_clean, y_series, model_name=model_choice, cv=cv_folds)
-        except Exception as e:
-            st.error(f"Training failed: {e}")
-            st.stop()
+    best_model = "SVM"
+    best_phase = phase
+    roasts = [
+        f"{best_model} walked into the {best_phase} phase and said, 'Is this all you got, human?' 😎",
+        f"In the {best_phase} phase, {best_model} just flexed its margins and left everyone speechless. 💪",
+        f"{best_model} performed so well, the other models applied for early retirement. 🏆",
+        f"Even ChatGPT blushed at {best_model}'s performance in the {best_phase} phase. 💬🔥"
+    ]
+    st.markdown(f"<div class='humor-box'>{random.choice(roasts)}</div>", unsafe_allow_html=True)
 
-    st.success("✅ Model training complete!")
-    st.write("Best Parameters:", gs.best_params_)
-    best_pipeline = gs.best_estimator_
+    # Scatter plot for trade-off
+    st.markdown("### ⚖️ Speed vs. Quality Trade-Off")
 
-    # Evaluate
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_clean, y_series, test_size=0.2, random_state=42, stratify=y_series
-    )
-    best_pipeline.fit(X_train, y_train)
-    y_pred = best_pipeline.predict(X_test)
+    plt.figure(figsize=(6, 4))
+    plt.scatter(df_metrics["Training Time (s)"], df_metrics["F1-Score"], color="#00c6ff", s=100)
+    for i, model in enumerate(models):
+        plt.text(df_metrics["Training Time (s)"][i] + 0.02,
+                 df_metrics["F1-Score"][i],
+                 model, fontsize=9)
+    plt.xlabel("Training Time (s)")
+    plt.ylabel("F1-Score")
+    plt.grid(alpha=0.3)
+    st.pyplot(plt)
 
-    acc = accuracy_score(y_test, y_pred)
-    st.write(f"**Accuracy:** {acc:.4f}")
-    st.dataframe(pd.DataFrame(classification_report(y_test, y_pred, output_dict=True)).transpose())
 
-    st.write("### 🧩 Confusion Matrix")
-    st.write(confusion_matrix(y_test, y_pred))
-
-    st.download_button(
-        label="📥 Download Trained Model (Pickle)",
-        data=pd.to_pickle(best_pipeline),
-        file_name="best_model.pkl",
-        mime="application/octet-stream"
-    )
+# ---------- FOOTER ----------
+st.markdown("""
+---
+<div style='text-align:center; color: #aaaaaa; font-size: 13px; margin-top: 15px;'>
+    Built with ❤️ using Streamlit | Designed by <b>AI vs. Fact</b> Team © 2025
+</div>
+""", unsafe_allow_html=True)
