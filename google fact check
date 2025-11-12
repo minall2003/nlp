@@ -1,1 +1,43 @@
+import difflib
+import pandas as pd
+import streamlit as st
+
+# --- Example Politifact Data (replace with your real dataset) ---
+# df_politifact = pd.read_csv("politifact_data.csv")
+
+st.header("🧠 Compare Politifact vs Google Fact Check")
+
+GOOGLE_API_KEY = "AIzaSyBJSYJSIPvzVBCVCKx7WWVyQUxrIhwtAk8"
+
+query = st.text_input("Enter a claim or topic to verify (e.g., 'COVID vaccine safe')")
+if st.button("🔍 Compare Facts"):
+    with st.spinner("Fetching and comparing fact checks..."):
+        # Step 1: Fetch Google data
+        google_data = fetch_google_factcheck(query, GOOGLE_API_KEY)
+        google_df = pd.DataFrame(google_data)
+        
+        # Step 2: Filter Politifact data (if available)
+        politifact_matches = df_politifact[df_politifact["statement"].str.contains(query, case=False, na=False)]
+        
+        # Step 3: Compare similarity of claims
+        comparisons = []
+        for _, row_p in politifact_matches.iterrows():
+            best_match = difflib.get_close_matches(row_p["statement"], google_df["Claim"].tolist(), n=1, cutoff=0.4)
+            if best_match:
+                matched = google_df[google_df["Claim"] == best_match[0]].iloc[0]
+                comparisons.append({
+                    "Politifact Claim": row_p["statement"],
+                    "Politifact Verdict": row_p["verdict"],
+                    "Google Claim": matched["Claim"],
+                    "Google Verdict": matched["Verdict"],
+                    "Publisher": matched["Publisher"],
+                    "Google URL": matched["URL"]
+                })
+
+        result_df = pd.DataFrame(comparisons)
+        if not result_df.empty:
+            st.success("✅ Comparison Results:")
+            st.dataframe(result_df)
+        else:
+            st.warning("No closely matching claims found between Politifact and Google Fact Check.")
 
