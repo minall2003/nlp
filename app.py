@@ -4,7 +4,39 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import time
+import requests
 from io import StringIO
+
+# ---------- HELPER FUNCTION: FETCH GOOGLE FACT CHECK DATA ----------
+def fetch_google_factcheck(query, api_key):
+    """
+    Fetches fact-checking results for a given query using Google Fact Check Tools API.
+    Returns a list of claims, verdicts, publishers, and URLs.
+    """
+    base_url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+    params = {"query": query, "key": api_key, "pageSize": 3}
+
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        results = []
+        for item in data.get("claims", []):
+            claim = item.get("text", "")
+            review = item.get("claimReview", [{}])[0]
+            results.append({
+                "Claim": claim,
+                "Verdict": review.get("textualRating", "Unknown"),
+                "Publisher": review.get("publisher", {}).get("name", "N/A"),
+                "URL": review.get("url", "")
+            })
+
+        return results
+
+    except Exception as e:
+        return [{"error": str(e)}]
+
 
 # ---------- STYLING & PAGE CONFIG ----------
 st.set_page_config(page_title="Battle of the Bots: The NLP Showdown", page_icon="⚔️", layout="wide")
@@ -12,20 +44,15 @@ st.set_page_config(page_title="Battle of the Bots: The NLP Showdown", page_icon=
 # Inject custom CSS for modern look
 st.markdown("""
 <style>
-/* Background gradient */
 .stApp {
     background: linear-gradient(135deg, #1e1e2f, #2b2b40);
     color: #ffffff;
     font-family: 'Poppins', sans-serif;
 }
-
-/* Section titles */
 h2, h3 {
     color: #f8f9fa;
     text-shadow: 0 0 10px rgba(255,255,255,0.2);
 }
-
-/* Metric boxes */
 .metric-box {
     background: rgba(255,255,255,0.05);
     border-radius: 15px;
@@ -33,8 +60,6 @@ h2, h3 {
     text-align: center;
     box-shadow: 0 0 10px rgba(255,255,255,0.05);
 }
-
-/* Buttons */
 div.stButton > button {
     border-radius: 10px;
     background: linear-gradient(90deg, #00c6ff, #0072ff);
@@ -47,8 +72,6 @@ div.stButton > button:hover {
     transform: scale(1.05);
     background: linear-gradient(90deg, #0072ff, #00c6ff);
 }
-
-/* Humor box */
 .humor-box {
     background: rgba(0,0,0,0.4);
     border-radius: 15px;
@@ -56,8 +79,6 @@ div.stButton > button:hover {
     font-style: italic;
     border-left: 5px solid #00c6ff;
 }
-
-/* Chart borders */
 .plot-container {
     background: rgba(255,255,255,0.05);
     border-radius: 15px;
@@ -114,7 +135,6 @@ with left_col:
 with center_col:
     st.markdown("### 📊 Model Benchmarking Results")
 
-    # Example data (you will replace with real model outputs)
     models = ["Naive Bayes", "Decision Tree", "Logistic Regression", "SVM"]
     metrics = {
         "Accuracy": [0.86, 0.78, 0.89, 0.91],
@@ -154,7 +174,6 @@ with right_col:
     ]
     st.markdown(f"<div class='humor-box'>{random.choice(roasts)}</div>", unsafe_allow_html=True)
 
-    # Scatter plot for trade-off
     st.markdown("### ⚖️ Speed vs. Quality Trade-Off")
 
     plt.figure(figsize=(6, 4))
@@ -167,6 +186,22 @@ with right_col:
     plt.ylabel("F1-Score")
     plt.grid(alpha=0.3)
     st.pyplot(plt)
+
+
+# ---------- FACT CHECK TEST ----------
+st.markdown("### 🔍 Google Fact Check Quick Test")
+
+query = st.text_input("Enter a claim or topic to verify (e.g., 'COVID vaccine safe')")
+api_key = st.text_input("Enter your Google Fact Check API Key", type="password")
+
+if st.button("Fetch Fact Check Data"):
+    if query and api_key:
+        with st.spinner("Fetching fact-check results..."):
+            results = fetch_google_factcheck(query, api_key)
+            st.success("✅ Results fetched successfully!")
+            st.dataframe(pd.DataFrame(results))
+    else:
+        st.warning("Please enter both query and API key.")
 
 
 # ---------- FOOTER ----------
