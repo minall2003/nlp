@@ -29,9 +29,35 @@ def fetch_politifact_data(pages=2):
             statement = s.find("div", class_="m-statement__quote")
             statement_text = statement.get_text(strip=True) if statement else None
 
-            # ✅ Extract verdict label
+            # ✅ Robust verdict extraction (avoids AttributeError)
+            label = "Not Rated"
             label_div = s.find("div", class_="m-statement__meter")
-            label = label_div.find("div", class_="c-meter__rating").get_text(strip=True) if label_div else "Not Rated"
+            if label_div:
+                # try common subselectors that may contain the text
+                cand = (
+                    label_div.find("div", class_="c-meter__rating")
+                    or label_div.find("span", class_="c-meter__rating")
+                    or label_div.find("div")
+                    or label_div.find("span")
+                )
+                if cand and cand.get_text(strip=True):
+                    label = cand.get_text(strip=True)
+                else:
+                    # sometimes the rating is present as an image alt text or title attribute
+                    img = label_div.find("img")
+                    if img and (img.get("alt") or img.get("title")):
+                        label = img.get("alt") or img.get("title")
+                    else:
+                        # last resort: check text of label_div itself
+                        text = label_div.get_text(separator=" ", strip=True)
+                        if text:
+                            # try to extract short token like "True", "False", "Pants on Fire"
+                            # take first 4 words max
+                            label = " ".join(text.split()[:4])
+                        else:
+                            label = "Not Rated"
+            else:
+                label = "Not Rated"
 
             # Speaker name
             speaker = s.find("a", class_="m-statement__name")
@@ -46,8 +72,7 @@ def fetch_politifact_data(pages=2):
 
         time.sleep(1)  # polite delay
 
-    df = pd.DataFrame(all_data)
-    return df
+    return pd.DataFrame(all_data)
 
 
 # ---------- HELPER FUNCTION: FETCH GOOGLE FACT CHECK DATA ----------
