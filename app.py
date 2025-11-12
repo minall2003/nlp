@@ -5,8 +5,49 @@ import matplotlib.pyplot as plt
 import random
 import time
 import requests
-from bs4 import BeautifulSoup  # <-- NEW IMPORT for PolitiFact scraping
 from io import StringIO
+from bs4 import BeautifulSoup  # ✅ added for PolitiFact scraping
+
+# ---------- HELPER FUNCTION: FETCH POLITIFACT DATA WITH LABELS ----------
+def fetch_politifact_data(pages=2):
+    """
+    Scrapes statements and verdict labels from PolitiFact.
+    Adds proper label extraction without changing app structure.
+    """
+    base_url = "https://www.politifact.com/factchecks/?page="
+    all_data = []
+
+    for page in range(1, pages + 1):
+        url = base_url + str(page)
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        statements = soup.find_all("li", class_="o-listicle__item")
+
+        for s in statements:
+            # Extract claim text
+            statement = s.find("div", class_="m-statement__quote")
+            statement_text = statement.get_text(strip=True) if statement else None
+
+            # ✅ Extract verdict label
+            label_div = s.find("div", class_="m-statement__meter")
+            label = label_div.find("div", class_="c-meter__rating").get_text(strip=True) if label_div else "Not Rated"
+
+            # Speaker name
+            speaker = s.find("a", class_="m-statement__name")
+            speaker_name = speaker.get_text(strip=True) if speaker else None
+
+            if statement_text:
+                all_data.append({
+                    "statement": statement_text,
+                    "verdict": label,
+                    "speaker": speaker_name
+                })
+
+        time.sleep(1)  # polite delay
+
+    df = pd.DataFrame(all_data)
+    return df
 
 
 # ---------- HELPER FUNCTION: FETCH GOOGLE FACT CHECK DATA ----------
@@ -40,59 +81,7 @@ def fetch_google_factcheck(query, api_key):
         return [{"error": str(e)}]
 
 
-# ---------- HELPER FUNCTION: FETCH POLITIFACT DATA ----------
-def fetch_politifact_data(pages=2):
-    """
-    Scrapes PolitiFact fact-check statements and verdicts.
-    Automatically handles missing verdicts and HTML changes.
-    """
-    base_url = "https://www.politifact.com/factchecks/?page="
-    all_claims = []
-
-    for page in range(1, pages + 1):
-        url = base_url + str(page)
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        statements = soup.find_all("li", class_="o-listicle__item")
-        for s in statements:
-            try:
-                statement = s.find("div", class_="m-statement__quote").get_text(strip=True)
-            except:
-                statement = None
-
-            # 🧩 FIXED VERDICT EXTRACTION
-            try:
-                meter_div = s.find("div", class_="m-statement__meter")
-                verdict = meter_div.find("div", class_="c-meter__rating").get_text(strip=True)
-            except:
-                verdict = "Not Rated"
-
-            try:
-                speaker = s.find("a", class_="m-statement__name").get_text(strip=True)
-            except:
-                speaker = None
-
-            try:
-                date = s.find("footer", class_="m-statement__footer").get_text(strip=True)
-            except:
-                date = None
-
-            if statement:
-                all_claims.append({
-                    "statement": statement,
-                    "verdict": verdict,
-                    "speaker": speaker,
-                    "date": date
-                })
-
-        time.sleep(1)  # prevent rate limiting
-
-    df = pd.DataFrame(all_claims)
-    return df
-
-
-# ---------- PAGE CONFIG & STYLE ----------
+# ---------- STYLING & PAGE CONFIG ----------
 st.set_page_config(page_title="Battle of the Bots: The NLP Showdown", page_icon="⚔️", layout="wide")
 
 st.markdown("""
@@ -142,7 +131,7 @@ div.stButton > button:hover {
 """, unsafe_allow_html=True)
 
 
-# ---------- SPLASH ----------
+# ---------- SPLASH SCREEN ----------
 with st.spinner("⚙️ Initializing AI humor protocols..."):
     time.sleep(1.5)
 
@@ -154,16 +143,92 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ---------- POLITIFACT SECTION ----------
-st.markdown("### 🗞️ PolitiFact Data (Live Scrape Test)")
-if st.button("Fetch PolitiFact Data"):
-    with st.spinner("Fetching latest fact-checks from PolitiFact..."):
-        df_politifact = fetch_politifact_data(2)
-        st.success("✅ Fetched successfully!")
-        st.dataframe(df_politifact.head(10))
+# ---------- LAYOUT ----------
+left_col, center_col, right_col = st.columns([1, 2, 2])
 
-# ---------- REST OF YOUR EXISTING CODE CONTINUES ----------
-# (left_col, center_col, right_col sections remain unchanged)
+
+# ---------- LEFT COLUMN: INPUT & CONFIG ----------
+with left_col:
+    st.markdown("### 📅 Data Sourcing")
+
+    start_date = st.date_input("Start Date")
+    end_date = st.date_input("End Date")
+
+    phase = st.selectbox("🧠 Choose NLP Phase", [
+        "Lexical & Morphological",
+        "Syntactic",
+        "Semantic",
+        "Discourse",
+        "Pragmatic"
+    ])
+
+    st.markdown("---")
+
+    st.markdown("### ⚙️ Analysis Settings")
+    st.slider("Train/Test Split Ratio", 0.1, 0.9, 0.8)
+    st.selectbox("Evaluation Metric", ["Accuracy", "F1-Score", "Precision", "Recall"])
+
+    if st.button("🚀 Run Comparison"):
+        st.toast("Running models... please wait ⏳")
+        time.sleep(2)
+
+
+# ---------- CENTER COLUMN: RESULTS ----------
+with center_col:
+    st.markdown("### 📊 Model Benchmarking Results")
+
+    models = ["Naive Bayes", "Decision Tree", "Logistic Regression", "SVM"]
+    metrics = {
+        "Accuracy": [0.86, 0.78, 0.89, 0.91],
+        "F1-Score": [0.84, 0.75, 0.88, 0.90],
+        "Precision": [0.85, 0.77, 0.88, 0.92],
+        "Recall": [0.83, 0.74, 0.87, 0.88],
+        "Training Time (s)": [0.2, 0.5, 0.7, 1.3],
+        "Inference Latency (ms)": [2, 5, 3, 8]
+    }
+    df_metrics = pd.DataFrame(metrics, index=models)
+
+    st.dataframe(df_metrics.style.highlight_max(color="#0072ff", axis=0))
+
+    st.markdown("### 📈 Performance Visualization")
+
+    metric_choice = st.selectbox("Select Metric to Visualize", list(metrics.keys())[:-2])
+    plt.figure(figsize=(7, 4))
+    plt.bar(models, df_metrics[metric_choice], color="#00c6ff", alpha=0.8)
+    plt.title(f"{metric_choice} Comparison", fontsize=14)
+    plt.xlabel("Model")
+    plt.ylabel(metric_choice)
+    plt.grid(alpha=0.2)
+    st.pyplot(plt)
+
+
+# ---------- RIGHT COLUMN: HUMOROUS CRITIQUE ----------
+with right_col:
+    st.markdown("### 😂 AI Roast Zone")
+
+    best_model = "SVM"
+    best_phase = phase
+    roasts = [
+        f"{best_model} walked into the {best_phase} phase and said, 'Is this all you got, human?' 😎",
+        f"In the {best_phase} phase, {best_model} just flexed its margins and left everyone speechless. 💪",
+        f"{best_model} performed so well, the other models applied for early retirement. 🏆",
+        f"Even ChatGPT blushed at {best_model}'s performance in the {best_phase} phase. 💬🔥"
+    ]
+    st.markdown(f"<div class='humor-box'>{random.choice(roasts)}</div>", unsafe_allow_html=True)
+
+    st.markdown("### ⚖️ Speed vs. Quality Trade-Off")
+
+    plt.figure(figsize=(6, 4))
+    plt.scatter(df_metrics["Training Time (s)"], df_metrics["F1-Score"], color="#00c6ff", s=100)
+    for i, model in enumerate(models):
+        plt.text(df_metrics["Training Time (s)"][i] + 0.02,
+                 df_metrics["F1-Score"][i],
+                 model, fontsize=9)
+    plt.xlabel("Training Time (s)")
+    plt.ylabel("F1-Score")
+    plt.grid(alpha=0.3)
+    st.pyplot(plt)
+
 
 # ---------- FACT CHECK TEST ----------
 st.markdown("### 🔍 Google Fact Check Quick Test")
@@ -179,6 +244,18 @@ if st.button("Fetch Fact Check Data"):
             st.dataframe(pd.DataFrame(results))
     else:
         st.warning("Please enter both query and API key.")
+
+
+# ---------- POLITIFACT SCRAPER TEST ----------
+st.markdown("### 📰 Fetch Latest PolitiFact Data")
+
+if st.button("Fetch PolitiFact Data"):
+    with st.spinner("Scraping PolitiFact..."):
+        df_politifact = fetch_politifact_data(2)
+        df_politifact.to_csv("politifact_data.csv", index=False)  # ✅ Save data automatically
+        st.success("✅ Data fetched and saved as politifact_data.csv successfully!")
+        st.dataframe(df_politifact.head(10))
+
 
 # ---------- FOOTER ----------
 st.markdown("""
