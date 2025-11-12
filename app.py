@@ -1,178 +1,160 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import random
-import time
-from io import StringIO
+import nltk
+import re
+import string
 
-# ---------- STYLING & PAGE CONFIG ----------
-st.set_page_config(page_title="AI vs. Fact: NLP Comparator", page_icon="🤖", layout="wide")
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Inject custom CSS for modern look
+# --------------------------
+# NLTK downloads (safe)
+# --------------------------
+def ensure_nltk_resources():
+    resources = [
+        "punkt",
+        "punkt_tab",
+        "wordnet",
+        "omw-1.4",
+        "stopwords",
+    ]
+    for r in resources:
+        try:
+            nltk.data.find(f"tokenizers/{r}") if "punkt" in r else nltk.data.find(f"corpora/{r}")
+        except LookupError:
+            nltk.download(r, quiet=True)
+
+ensure_nltk_resources()
+
+# --------------------------
+# Text Preprocessing
+# --------------------------
+def lexical_preprocess(text):
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
+    text = text.translate(str.maketrans('', '', string.punctuation))
+
+    tokens = re.findall(r'\b\w+\b', text.lower())
+    tokens = [word for word in tokens if word not in stopwords.words('english')]
+
+    lemmatizer = WordNetLemmatizer()
+    tokens = [lemmatizer.lemmatize(word) for word in tokens]
+
+    return ' '.join(tokens)
+
+# --------------------------
+# Model Evaluation Function
+# --------------------------
+def evaluate_models(X_features, y):
+    if y.value_counts().min() < 2:
+        st.warning("⚠️ One or more target classes have less than 2 samples — skipping stratified split.")
+        stratify_opt = None
+    else:
+        stratify_opt = y
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_features, y, test_size=0.2, random_state=42, stratify=stratify_opt
+    )
+
+    model = LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    acc = accuracy_score(y_test, y_pred)
+    cls_report = classification_report(y_test, y_pred, output_dict=True)
+    conf_mat = confusion_matrix(y_test, y_pred)
+
+    return {
+        'accuracy': acc,
+        'report': cls_report,
+        'confusion_matrix': conf_mat,
+    }
+
+# --------------------------
+# Streamlit UI Configuration
+# --------------------------
+st.set_page_config(page_title="⚡ AI vs. Fact: NLP Comparator", layout="wide")
+
+# --------------------------
+# 🌈 Animated Gradient Title
+# --------------------------
 st.markdown("""
 <style>
-/* Background gradient */
-.stApp {
-    background: linear-gradient(135deg, #1e1e2f, #2b2b40);
-    color: #ffffff;
-    font-family: 'Poppins', sans-serif;
+@keyframes gradientShift {
+  0% {background-position: 0% 50%;}
+  50% {background-position: 100% 50%;}
+  100% {background-position: 0% 50%;}
 }
 
-/* Section titles */
-h2, h3 {
-    color: #f8f9fa;
-    text-shadow: 0 0 10px rgba(255,255,255,0.2);
+h1.gradient-text {
+  font-size: 58px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  background: linear-gradient(270deg, #00f5ff, #0072ff, #ff00c8);
+  background-size: 600% 600%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradientShift 6s ease infinite;
+  text-shadow: 0px 0px 20px rgba(255,255,255,0.25);
 }
 
-/* Metric boxes */
-.metric-box {
-    background: rgba(255,255,255,0.05);
-    border-radius: 15px;
-    padding: 15px;
-    text-align: center;
-    box-shadow: 0 0 10px rgba(255,255,255,0.05);
-}
-
-/* Buttons */
-div.stButton > button {
-    border-radius: 10px;
-    background: linear-gradient(90deg, #00c6ff, #0072ff);
-    color: white;
-    font-weight: 600;
-    border: none;
-    transition: all 0.3s ease;
-}
-div.stButton > button:hover {
-    transform: scale(1.05);
-    background: linear-gradient(90deg, #0072ff, #00c6ff);
-}
-
-/* Humor box */
-.humor-box {
-    background: rgba(0,0,0,0.4);
-    border-radius: 15px;
-    padding: 15px;
-    font-style: italic;
-    border-left: 5px solid #00c6ff;
-}
-
-/* Chart borders */
-.plot-container {
-    background: rgba(255,255,255,0.05);
-    border-radius: 15px;
-    padding: 10px;
-    box-shadow: 0 0 10px rgba(255,255,255,0.1);
+p.subtitle {
+  color: #e5e5e5;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 8px rgba(0,255,255,0.4);
 }
 </style>
-""", unsafe_allow_html=True)
 
-
-# ---------- SPLASH SCREEN ----------
-with st.spinner("⚙️ Initializing AI humor protocols..."):
-    time.sleep(1.5)
-
-st.markdown("""
-<div style='text-align:center; margin-bottom: 30px;'>
-    <h1>🤖 AI vs. Fact: NLP Comparator</h1>
-    <p style='color:#cfcfcf;'>Where machine learning models compete... and sometimes get roasted.</p>
+<div style='text-align:center; margin-bottom: 40px;'>
+    <h1 class='gradient-text'>⚡ AI vs. Fact ⚖️</h1>
+    <p class='subtitle'>Where Algorithms Battle Truth... and Only the Wittiest Survive 🤖🔥</p>
 </div>
 """, unsafe_allow_html=True)
 
+# --------------------------
+# File Upload Section
+# --------------------------
+uploaded_file = st.file_uploader("📂 Upload your CSV dataset", type=["csv"])
 
-# ---------- LAYOUT ----------
-left_col, center_col, right_col = st.columns([1, 2, 2])
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    st.write("### 🔍 Dataset Preview", df.head())
 
+    text_col = st.selectbox("📝 Select Text Column", df.columns)
+    target_col = st.selectbox("🎯 Select Target Column", df.columns)
 
-# ---------- LEFT COLUMN: INPUT & CONFIG ----------
-with left_col:
-    st.markdown("### 📅 Data Sourcing")
+    if st.button("🚀 Train Model"):
+        with st.spinner("Preprocessing text and training model..."):
+            X = df[text_col].astype(str)
+            y = df[target_col]
 
-    start_date = st.date_input("Start Date")
-    end_date = st.date_input("End Date")
+            # Text preprocessing
+            X_processed = X.apply(lexical_preprocess)
 
-    phase = st.selectbox("🧠 Choose NLP Phase", [
-        "Lexical & Morphological", 
-        "Syntactic", 
-        "Semantic", 
-        "Discourse", 
-        "Pragmatic"
-    ])
+            # TF-IDF Vectorization
+            vectorizer = TfidfVectorizer(max_features=5000)
+            X_features = vectorizer.fit_transform(X_processed)
 
-    st.markdown("---")
+            # Model evaluation
+            results = evaluate_models(X_features, y)
 
-    st.markdown("### ⚙️ Analysis Settings")
-    st.slider("Train/Test Split Ratio", 0.1, 0.9, 0.8)
-    st.selectbox("Evaluation Metric", ["Accuracy", "F1-Score", "Precision", "Recall"])
+        st.success("✅ Model trained successfully!")
+        st.write(f"**Accuracy:** {results['accuracy']:.2f}")
 
-    if st.button("🚀 Run Comparison"):
-        st.toast("Running models... please wait ⏳")
-        time.sleep(2)
+        st.write("### 📊 Classification Report")
+        st.dataframe(pd.DataFrame(results['report']).transpose())
 
-
-# ---------- CENTER COLUMN: RESULTS ----------
-with center_col:
-    st.markdown("### 📊 Model Benchmarking Results")
-
-    # Example data (you will replace with real model outputs)
-    models = ["Naive Bayes", "Decision Tree", "Logistic Regression", "SVM"]
-    metrics = {
-        "Accuracy": [0.86, 0.78, 0.89, 0.91],
-        "F1-Score": [0.84, 0.75, 0.88, 0.90],
-        "Precision": [0.85, 0.77, 0.88, 0.92],
-        "Recall": [0.83, 0.74, 0.87, 0.88],
-        "Training Time (s)": [0.2, 0.5, 0.7, 1.3],
-        "Inference Latency (ms)": [2, 5, 3, 8]
-    }
-    df_metrics = pd.DataFrame(metrics, index=models)
-
-    st.dataframe(df_metrics.style.highlight_max(color="#0072ff", axis=0))
-
-    st.markdown("### 📈 Performance Visualization")
-
-    metric_choice = st.selectbox("Select Metric to Visualize", list(metrics.keys())[:-2])
-    plt.figure(figsize=(7, 4))
-    plt.bar(models, df_metrics[metric_choice], color="#00c6ff", alpha=0.8)
-    plt.title(f"{metric_choice} Comparison", fontsize=14)
-    plt.xlabel("Model")
-    plt.ylabel(metric_choice)
-    plt.grid(alpha=0.2)
-    st.pyplot(plt)
-
-
-# ---------- RIGHT COLUMN: HUMOROUS CRITIQUE ----------
-with right_col:
-    st.markdown("### 😂 AI Roast Zone")
-
-    best_model = "SVM"
-    best_phase = phase
-    roasts = [
-        f"{best_model} walked into the {best_phase} phase and said, 'Is this all you got, human?' 😎",
-        f"In the {best_phase} phase, {best_model} just flexed its margins and left everyone speechless. 💪",
-        f"{best_model} performed so well, the other models applied for early retirement. 🏆",
-        f"Even ChatGPT blushed at {best_model}'s performance in the {best_phase} phase. 💬🔥"
-    ]
-    st.markdown(f"<div class='humor-box'>{random.choice(roasts)}</div>", unsafe_allow_html=True)
-
-    # Scatter plot for trade-off
-    st.markdown("### ⚖️ Speed vs. Quality Trade-Off")
-
-    plt.figure(figsize=(6, 4))
-    plt.scatter(df_metrics["Training Time (s)"], df_metrics["F1-Score"], color="#00c6ff", s=100)
-    for i, model in enumerate(models):
-        plt.text(df_metrics["Training Time (s)"][i] + 0.02,
-                 df_metrics["F1-Score"][i],
-                 model, fontsize=9)
-    plt.xlabel("Training Time (s)")
-    plt.ylabel("F1-Score")
-    plt.grid(alpha=0.3)
-    st.pyplot(plt)
-
-
-# ---------- FOOTER ----------
-st.markdown("""
----
-<div style='text-align:center; color: #aaaaaa; font-size: 13px; margin-top: 15px;'>
-    Built with ❤️ using Streamlit | Designed by <b>AI vs. Fact</b> Team © 2025
-</div>
-""", unsafe_allow_html=True)
+        st.write("### 🧩 Confusion Matrix")
+        st.write(results['confusion_matrix'])
+else:
+    st.info("📤 Please upload a CSV file to begin.")
